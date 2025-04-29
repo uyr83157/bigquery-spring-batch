@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.ExitStatus;
 import org.springframework.batch.core.StepExecution;
 import org.springframework.batch.core.StepExecutionListener;
+import org.springframework.batch.item.ExecutionContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -16,8 +17,11 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 @Slf4j
@@ -34,7 +38,7 @@ public class IncrementalTimestampStepListener implements StepExecutionListener {
 
 	private static final String GCS_FILE_URIS_KEY = "gcsFileUris"; // ExecutionContext 에 GCS 파일 경로 리스트를 저장할 때 사용할 키
 	private static final String MAX_TIMESTAMP_KEY = "maxProcessedTimestampInChunk"; // ExecutionContext 에 처리된 데이터 중 최신 타임스탬프 값을 저장할 때 사용할 키
-
+	private static final String STEP_START_TIME_KEY = "stepStartTime"; // 시작 시간 저장을 위한 키 추가
 	// 생성자
 	public IncrementalTimestampStepListener(JdbcTemplate jdbcTemplate,
 		@Value("${app.batch.job-name}") String jobName,
@@ -56,6 +60,10 @@ public class IncrementalTimestampStepListener implements StepExecutionListener {
 	@Override
 	public void beforeStep(StepExecution stepExecution) {
 		log.info("Before Step: 마지막으로 처리된 타임스탬프 호출: 작업 = {}", jobName);
+
+		// Step 시작 시간 기록
+		stepExecution.getExecutionContext().put(STEP_START_TIME_KEY, LocalDateTime.now());
+
 		Timestamp lastProcessedTimestamp; // 마지막 처리 타임스탬프 저장 변수
 
 		try {
@@ -85,8 +93,17 @@ public class IncrementalTimestampStepListener implements StepExecutionListener {
 			log.info("After Step: BigQuery 로드 시작: 완료된 스텝 = {}, 파일 크기 = {}",
 				stepExecution.getStepName(), gcsFileUris.size());
 
+			// BigQuery 로드 시간 측정 시작
+			long bqLoadStartTime = System.currentTimeMillis();
+
 			// GCS 에 넣은 파일을 BigQuery 테이블로 로드
 			boolean loadJobSuccessful = runBigQueryLoadJob(gcsFileUris);
+
+			long bqLoadEndTime = System.currentTimeMillis();
+			long bqLoadDuration = bqLoadEndTime - bqLoadStartTime;
+			double bqLoadDurationSeconds = bqLoadDuration / 1000.0;
+			log.info("BigQuery 로드 (runBigQueryLoadJob) 실행 시간 = {} 밀리초 ({} 초)", bqLoadDuration, bqLoadDurationSeconds);
+			// BigQuery 로드 시간 측정 종료
 
 			if (loadJobSuccessful) {
 				log.info("BigQuery 로드 성공");
@@ -114,6 +131,19 @@ public class IncrementalTimestampStepListener implements StepExecutionListener {
 			// 스텝 실패
 			log.warn("After Step: 스텝 실패: 실패한 스텝 = {}, 스텝 상태 = {}",
 				stepExecution.getStepName(), stepExecution.getExitStatus());
+		}
+
+		// Step 종료 시간 기록
+		LocalDateTime endTime = LocalDateTime.now();
+		ExecutionContext executionContext = stepExecution.getExecutionContext();
+		LocalDateTime startTime = (LocalDateTime) executionContext.get(STEP_START_TIME_KEY);
+
+		if (startTime != null) {
+			Duration stepDuration = Duration.between(startTime, endTime);
+			log.info("Step = {}, 전체 실행 시간 = {} 밀리초 ({} 초)",
+				stepExecution.getStepName(),
+				stepDuration.toMillis(),
+				stepDuration.toSeconds());
 		}
 
 		// 스텝 최종 상태 반환
