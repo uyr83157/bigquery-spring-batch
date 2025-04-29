@@ -1,0 +1,92 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.5'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    // Spring Boot 버전을 명시적으로 관리
+    set('springBootVersion', "3.4.5")
+    // Spring Boot 버전에 맞춰서 Spring Cloud 사용
+    set('springCloudVersion', "2024.0.0")
+    // Spring Cloud 버전에 맞춰서 Spring Cloud GCP 사용
+    set('springCloudGcpVersion', "6.1.1")
+}
+
+
+dependencyManagement {
+    imports {
+        // Spring Cloud GCP BOM
+        mavenBom "com.google.cloud:spring-cloud-gcp-dependencies:${springCloudGcpVersion}"
+        // Spring Cloud BOM
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // MySQL Connector/J
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    // Spring Batch 사용 의존성
+    implementation 'org.springframework.boot:spring-boot-starter-batch'
+
+    // ItemReader/Writer 에서 DB 접근 시 필요
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+
+    // BigQuery 연동을 위한 의존성 => BigQuery 클라이언트 API 사용 시 필요
+    implementation 'com.google.cloud:google-cloud-bigquery'
+
+    // Spring Cloud GCP BigQuery Starter
+     implementation 'com.google.cloud:spring-cloud-gcp-starter-bigquery'
+
+    // Jackson Databind => BigQuery ItemWriter 에서 JSON 직렬화 사용
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // Spring Boot Starter Test
+    testImplementation 'org.springframework.batch:spring-batch-test'
+
+    // Java 8+ 시간 타입 처리를 위한 모듈 => BigQuery Writer 에서 Instant 등 처리 시 필요
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Google Cloud Storage 클라이언트 추가
+    implementation 'com.google.cloud:google-cloud-storage'
+
+    // Jackson CSV 데이터 포맷 추가
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-csv'
+
+    // Spring Cloud GCP Storage Starter
+    implementation 'com.google.cloud:spring-cloud-gcp-starter-storage'
+
+    //  H2 데이터베이스 드라이버 라이브러리 (테스트용)
+    testRuntimeOnly 'com.h2database:h2'
+
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
