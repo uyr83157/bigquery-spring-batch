@@ -30,6 +30,7 @@ import com.example.springbatch.job.mysql_to_bigquery.dto.AuctionProductDto;
 import com.example.springbatch.job.mysql_to_bigquery.dto.AuctionsWinningBidDto;
 import com.example.springbatch.job.mysql_to_bigquery.reader.AuctionProductRowMapper;
 import com.example.springbatch.listener.IncrementalTimestampStepListener;
+import com.example.springbatch.provider.MySqlCustomPagingQueryProvider;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -50,7 +51,6 @@ public class BatchJobConfig { //  배치 작업 설정 => ETL 파이프라인
 	private final ItemProcessor<AuctionProductDto, AuctionsWinningBidDto> processor; // 읽어온 데이터를 BigQuery 형식으로 변환
 	private final ItemWriter<AuctionsWinningBidDto> writer; // 변환된 데이터를 BigQuery 에 적재
 	private final IncrementalTimestampStepListener listener; // Step 실행 전후에 마지막 처리 시각을 관리
-
 
 	// 생성자
 	@Autowired
@@ -75,7 +75,6 @@ public class BatchJobConfig { //  배치 작업 설정 => ETL 파이프라인
 		this.listener = listener;
 	}
 
-
 	// ItemReader 정의
 	@Bean
 	@StepScope // 각 Step 이 시작될 때마다 새로운 Bean 인스턴스가 생성되도록 함 => 간섭 방지
@@ -87,22 +86,21 @@ public class BatchJobConfig { //  배치 작업 설정 => ETL 파이프라인
 		log.info("mysqlItemReader 빈 생성 시작. lastProcessedTimestamp 값: {}", lastProcessedTimestamp);
 
 		// 데이터 가져올 SQL 쿼리 설정
-		MySqlPagingQueryProvider queryProvider = new MySqlPagingQueryProvider();
-		queryProvider.setSelectClause("a.id AS auction_id, p.id AS product_id, p.product_name, p.category AS product_category, a.max_price, a.start_time AS auction_start_time, a.end_time AS auction_end_time, GREATEST(a.modified_at, p.modified_at) AS last_modified");
-		queryProvider.setFromClause("auctions a JOIN product p ON a.product_id = p.id");
-		queryProvider.setWhereClause("GREATEST(a.modified_at, p.modified_at) > :lastProcessedTimestamp");
+		// Custom Provider 사용
+		String baseSelect = "a.id AS auction_id, p.id AS product_id, p.product_name, p.category AS product_category, "
+			+ "a.max_price, a.start_time AS auction_start_time, a.end_time AS auction_end_time, "
+			+ "GREATEST(a.modified_at, p.modified_at) AS last_modified";
+		String from = "auctions a JOIN product p ON a.product_id = p.id";
+		String where = "GREATEST(a.modified_at, p.modified_at) > :lastProcessedTimestamp";
 
-		// 정렬 기준 설정
-		Map<String, Order> sortKeys = new HashMap<>();
-		sortKeys.put("last_modified", Order.ASCENDING);
-		sortKeys.put("auction_id", Order.ASCENDING);
-		queryProvider.setSortKeys(sortKeys);
+		MySqlCustomPagingQueryProvider queryProvider = new MySqlCustomPagingQueryProvider(baseSelect, from, where);
 
-		// lastProcessedTimestamp 값 삽입
 		Map<String, Object> parameterValues = new HashMap<>();
-		parameterValues.put("lastProcessedTimestamp", lastProcessedTimestamp != null ? lastProcessedTimestamp : Timestamp.valueOf("2025-04-26 00:00:00"));
-		// lastProcessedTimestamp 는 실행 후 기록되기 때문에 첫 실행 시에는 null 임
-		// => 이 때, 첫 실행 시 어떤 타임스탬프 값으로 할지 지정해 놓음
+
+		// lastProcessedTimestamp 가 null 일 경우 기본값
+		String defaultTimestamp = "2025-01-01 00:00:00";
+		parameterValues.put("lastProcessedTimestamp",
+			lastProcessedTimestamp == null ? defaultTimestamp : lastProcessedTimestamp);
 
 		return new JdbcPagingItemReaderBuilder<AuctionProductDto>()
 			.name("mysqlAuctionProductReader")
@@ -113,9 +111,9 @@ public class BatchJobConfig { //  배치 작업 설정 => ETL 파이프라인
 			// DB 컬럼명과 DTO 필드명이 같으면 커스텀 매퍼 안쓰고 내장된 BeanPropertyRowMapper 써도 됨
 			// 하지만 BeanPropertyRowMapper 는 set 기반이기에 build 방식으로 쓰기 위해서 커스텀 매퍼 따로 만들어줌
 			.rowMapper(new AuctionProductRowMapper())
+			.maxItemCount(5000)
 			.build();
 	}
-
 
 	// Reader, Processor, Writer, Listener 를 하나로 묶음
 	@Bean
